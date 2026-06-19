@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,14 @@ String memoryToolResultLabel(MemoryMessage? resultMessage) {
     return '已返回';
   }
   return '无结果';
+}
+
+Duration? memoryReasoningDuration(MemoryMessage message) {
+  final milliseconds = message.reasoningDurationMs;
+  if (milliseconds == null || milliseconds < 0) {
+    return null;
+  }
+  return Duration(milliseconds: milliseconds);
 }
 
 class MemoryPage extends StatefulWidget {
@@ -57,6 +66,9 @@ class _MemoryPageState extends State<MemoryPage> {
   bool _waitingForMemoryResponse = false;
   bool _thinkingEnabled = true;
   String _reasoningEffort = 'high';
+  Timer? _reasoningDurationTimer;
+  int? _reasoningDurationMessageIndex;
+  DateTime? _reasoningDurationStartedAt;
 
   bool get _inChat => _messages.isNotEmpty;
 
@@ -77,6 +89,7 @@ class _MemoryPageState extends State<MemoryPage> {
 
   @override
   void dispose() {
+    _stopReasoningDurationTimer();
     _entryController.dispose();
     _chatController.dispose();
     _scrollController.dispose();
@@ -99,6 +112,7 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _newConversation() async {
+    _stopReasoningDurationTimer();
     await widget.conversationService.clear(
       appDataDir: widget.localDataState.dataDirectory,
     );
@@ -165,6 +179,7 @@ class _MemoryPageState extends State<MemoryPage> {
     final turnSources = <MemorySource>[];
 
     for (var turn = 0; turn < maxTurns; turn++) {
+      final requestStartedAt = DateTime.now();
       _setWaitingForMemoryResponse(true);
       final stream = widget.aiClientService.memoryToolChatStream(
         appDataDir: widget.localDataState.dataDirectory,
@@ -176,16 +191,19 @@ class _MemoryPageState extends State<MemoryPage> {
 
       if (stream == null) {
         _setWaitingForMemoryResponse(false);
+        _stopReasoningDurationTimer();
         return _fallbackLocalAnswer(question);
       }
 
       var visibleIndex = -1;
       var content = '';
       var reasoningContent = '';
+      int? reasoningDurationMs;
       var toolCalls = <MemoryToolCallMessage>[];
       await for (final event in stream) {
         if (event.eventType == 'error') {
           _setWaitingForMemoryResponse(false);
+          _stopReasoningDurationTimer();
           return MemoryMessage(
             role: 'ai',
             content: event.errorMessage.trim().isEmpty
@@ -198,6 +216,15 @@ class _MemoryPageState extends State<MemoryPage> {
         if (event.eventType == 'delta') {
           content = event.content;
           reasoningContent = event.reasoningContent;
+          final hasReasoning = reasoningContent.trim().isNotEmpty;
+          final hasContent = content.trim().isNotEmpty;
+          if (hasReasoning && hasContent) {
+            reasoningDurationMs ??= _reasoningDurationMs(
+              reasoningContent,
+              requestStartedAt,
+            );
+            _stopReasoningDurationTimer();
+          }
           if (_hasVisibleModelOutput(content, reasoningContent)) {
             _setWaitingForMemoryResponse(false);
           }
@@ -205,14 +232,24 @@ class _MemoryPageState extends State<MemoryPage> {
             visibleIndex,
             content: content,
             reasoningContent: reasoningContent,
+            requestStartedAt: requestStartedAt,
+            reasoningDurationMs: reasoningDurationMs,
             sources: turnSources,
           );
+          if (hasReasoning && reasoningDurationMs == null) {
+            _startReasoningDurationTimer(visibleIndex, requestStartedAt);
+          }
           _scrollToBottom();
         }
         if (event.eventType == 'done') {
           content = event.content;
           reasoningContent = event.reasoningContent;
           _setWaitingForMemoryResponse(false);
+          reasoningDurationMs ??= _reasoningDurationMs(
+            reasoningContent,
+            requestStartedAt,
+          );
+          _stopReasoningDurationTimer();
           toolCalls = event.toolCalls
               .map(
                 (toolCall) => MemoryToolCallMessage(
@@ -224,12 +261,14 @@ class _MemoryPageState extends State<MemoryPage> {
               .toList();
         }
       }
+      _stopReasoningDurationTimer();
 
       if (toolCalls.isEmpty) {
         final finalMessage = MemoryMessage(
           role: 'ai',
           content: content.trim().isEmpty ? '我没有拿到可用回答。' : content.trim(),
           reasoningContent: reasoningContent.trim(),
+          reasoningDurationMs: reasoningDurationMs,
           createdAt: DateTime.now(),
           sources: turnSources,
         );
@@ -249,6 +288,7 @@ class _MemoryPageState extends State<MemoryPage> {
         role: 'assistant',
         content: content,
         reasoningContent: reasoningContent,
+        reasoningDurationMs: reasoningDurationMs,
         createdAt: DateTime.now(),
         toolCalls: toolCalls,
       );
@@ -296,6 +336,114 @@ class _MemoryPageState extends State<MemoryPage> {
     return content.trim().isNotEmpty || reasoningContent.trim().isNotEmpty;
   }
 
+  int? _reasoningDurationMs(
+    String reasoningContent,
+    DateTime requestStartedAt,
+  ) {
+    if (reasoningContent.trim().isEmpty) {
+      return null;
+    }
+    final milliseconds = DateTime.now()
+        .difference(requestStartedAt)
+        .inMilliseconds;
+    return milliseconds < 0 ? 0 : milliseconds;
+  }
+
+  void _startReasoningDurationTimer(
+    int messageIndex,
+    DateTime requestStartedAt,
+  ) {
+    if (messageIndex < 0) {
+      return;
+    }
+    if (_reasoningDurationMessageIndex == messageIndex &&
+        _reasoningDurationStartedAt == requestStartedAt &&
+        _reasoningDurationTimer != null) {
+      _refreshReasoningDuration();
+      return;
+    }
+
+    _stopReasoningDurationTimer();
+    _reasoningDurationMessageIndex = messageIndex;
+    _reasoningDurationStartedAt = requestStartedAt;
+    _reasoningDurationTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => _refreshReasoningDuration(),
+    );
+    _refreshReasoningDuration();
+  }
+
+  void _stopReasoningDurationTimer() {
+    _reasoningDurationTimer?.cancel();
+    _reasoningDurationTimer = null;
+    _reasoningDurationMessageIndex = null;
+    _reasoningDurationStartedAt = null;
+  }
+
+  void _refreshReasoningDuration() {
+    if (!mounted) {
+      _stopReasoningDurationTimer();
+      return;
+    }
+    final messageIndex = _reasoningDurationMessageIndex;
+    final startedAt = _reasoningDurationStartedAt;
+    if (messageIndex == null ||
+        startedAt == null ||
+        messageIndex < 0 ||
+        messageIndex >= _messages.length) {
+      _stopReasoningDurationTimer();
+      return;
+    }
+
+    final message = _messages[messageIndex];
+    if (message.reasoningContent.trim().isEmpty) {
+      return;
+    }
+
+    final reasoningDurationMs = _elapsedMillisecondsSince(startedAt);
+    if (message.reasoningDurationMs == reasoningDurationMs) {
+      return;
+    }
+
+    setState(() {
+      if (messageIndex >= _messages.length) {
+        return;
+      }
+      final current = _messages[messageIndex];
+      if (current.reasoningContent.trim().isEmpty) {
+        return;
+      }
+      final updated = [..._messages];
+      updated[messageIndex] = _copyMemoryMessageWithDuration(
+        current,
+        reasoningDurationMs,
+      );
+      _messages = updated;
+    });
+  }
+
+  int _elapsedMillisecondsSince(DateTime startedAt) {
+    final milliseconds = DateTime.now().difference(startedAt).inMilliseconds;
+    return milliseconds < 0 ? 0 : milliseconds;
+  }
+
+  MemoryMessage _copyMemoryMessageWithDuration(
+    MemoryMessage message,
+    int reasoningDurationMs,
+  ) {
+    return MemoryMessage(
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      reasoningContent: message.reasoningContent,
+      reasoningDurationMs: reasoningDurationMs,
+      toolName: message.toolName,
+      toolCallId: message.toolCallId,
+      toolCalls: message.toolCalls,
+      sources: message.sources,
+    );
+  }
+
   void _setWaitingForMemoryResponse(bool value) {
     if (!mounted || _waitingForMemoryResponse == value) {
       return;
@@ -310,12 +458,17 @@ class _MemoryPageState extends State<MemoryPage> {
     int visibleIndex, {
     required String content,
     required String reasoningContent,
+    required DateTime requestStartedAt,
+    required int? reasoningDurationMs,
     required List<MemorySource> sources,
   }) {
     final message = MemoryMessage(
       role: 'ai',
       content: content,
       reasoningContent: reasoningContent,
+      reasoningDurationMs:
+          reasoningDurationMs ??
+          _reasoningDurationMs(reasoningContent, requestStartedAt),
       createdAt: DateTime.now(),
       sources: sources,
     );
@@ -1017,6 +1170,7 @@ class _MemoryMessageView extends StatelessWidget {
             if (message.reasoningContent.trim().isNotEmpty) ...[
               _ReasoningBlock(
                 reasoning: message.reasoningContent,
+                duration: memoryReasoningDuration(message),
                 collapsed: shouldCollapseMemoryReasoning(message),
               ),
               const SizedBox(height: 12),
@@ -1303,9 +1457,14 @@ class _ToolDetailBlock extends StatelessWidget {
 }
 
 class _ReasoningBlock extends StatefulWidget {
-  const _ReasoningBlock({required this.reasoning, required this.collapsed});
+  const _ReasoningBlock({
+    required this.reasoning,
+    required this.duration,
+    required this.collapsed,
+  });
 
   final String reasoning;
+  final Duration? duration;
   final bool collapsed;
 
   @override
@@ -1348,6 +1507,10 @@ class _ReasoningBlockState extends State<_ReasoningBlock> {
 
   @override
   Widget build(BuildContext context) {
+    final titleStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
+      color: AppTheme.textSubtle,
+      fontWeight: FontWeight.w700,
+    );
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -1373,13 +1536,22 @@ class _ReasoningBlockState extends State<_ReasoningBlock> {
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        '思考过程',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: AppTheme.textSubtle,
-                              fontWeight: FontWeight.w700,
-                            ),
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            const TextSpan(text: '深度思考'),
+                            if (widget.duration != null)
+                              TextSpan(
+                                text:
+                                    ' (${_formatReasoningDuration(widget.duration!)})',
+                                style: titleStyle?.copyWith(
+                                  color: const Color(0xB36B7280),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                          ],
+                        ),
+                        style: titleStyle,
                       ),
                     ),
                     Icon(
@@ -1398,6 +1570,15 @@ class _ReasoningBlockState extends State<_ReasoningBlock> {
         ],
       ),
     );
+  }
+
+  String _formatReasoningDuration(Duration duration) {
+    final seconds = duration.inMilliseconds / 1000;
+    if (seconds < 60) {
+      return '${seconds.toStringAsFixed(1)}s';
+    }
+    final minutes = seconds / 60;
+    return '${minutes.toStringAsFixed(1)}m';
   }
 
   Widget _buildReasoningBody(BuildContext context) {

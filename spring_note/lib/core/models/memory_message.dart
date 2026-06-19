@@ -4,6 +4,7 @@ class MemoryMessage {
     required this.content,
     required this.createdAt,
     this.reasoningContent = '',
+    this.reasoningDurationMs,
     this.toolName,
     this.toolCallId,
     this.toolCalls = const [],
@@ -14,6 +15,7 @@ class MemoryMessage {
   final String content;
   final DateTime createdAt;
   final String reasoningContent;
+  final int? reasoningDurationMs;
   final String? toolName;
   final String? toolCallId;
   final List<MemoryToolCallMessage> toolCalls;
@@ -24,6 +26,9 @@ class MemoryMessage {
       role: json['role']?.toString() ?? 'user',
       content: json['content']?.toString() ?? '',
       reasoningContent: json['reasoningContent']?.toString() ?? '',
+      reasoningDurationMs: json['reasoningDurationMs'] is num
+          ? (json['reasoningDurationMs'] as num).toInt()
+          : null,
       createdAt:
           DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
@@ -39,6 +44,8 @@ class MemoryMessage {
       'role': role,
       'content': content,
       if (reasoningContent.isNotEmpty) 'reasoningContent': reasoningContent,
+      if (reasoningDurationMs != null)
+        'reasoningDurationMs': reasoningDurationMs,
       'createdAt': createdAt.toIso8601String(),
       if (toolName != null) 'toolName': toolName,
       if (toolCallId != null) 'toolCallId': toolCallId,

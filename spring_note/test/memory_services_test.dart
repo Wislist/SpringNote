@@ -30,6 +30,8 @@ void main() {
         MemoryMessage(
           role: 'ai',
           content: '你完成了首页统计。',
+          reasoningContent: '先检查昨天的日报。',
+          reasoningDurationMs: 4700,
           createdAt: DateTime(2026, 6, 18, 0, 1),
         ),
       ];
@@ -39,6 +41,7 @@ void main() {
       expect(reloaded, hasLength(2));
       expect(reloaded.first.role, 'user');
       expect(reloaded.last.content, contains('首页统计'));
+      expect(reloaded.last.reasoningDurationMs, 4700);
 
       await service.clear(appDataDir: temp.path);
       expect(await service.readMessages(appDataDir: temp.path), isEmpty);
