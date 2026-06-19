@@ -10,6 +10,10 @@ import '../../core/services/memory_conversation_service.dart';
 import '../../core/services/memory_search_service.dart';
 import '../../core/theme/app_theme.dart';
 
+bool shouldCollapseMemoryReasoning(MemoryMessage message) {
+  return message.content.trim().isNotEmpty || message.toolCalls.isNotEmpty;
+}
+
 class MemoryPage extends StatefulWidget {
   const MemoryPage({
     super.key,
@@ -704,41 +708,28 @@ class _MemoryComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: focusNode,
-      builder: (context, child) {
-        final focused = focusNode.hasFocus;
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          constraints: const BoxConstraints(minHeight: 54),
-          padding: const EdgeInsets.fromLTRB(7, 5, 8, 5),
-          decoration: BoxDecoration(
-            color: focused ? const Color(0xE6F8FAFC) : const Color(0x99F8FAFC),
-            border: Border.all(
-              color: focused
-                  ? const Color(0xCCCBD5E1)
-                  : const Color(0x99E2E8F0),
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x080F172A),
-                blurRadius: 24,
-                offset: Offset(0, 8),
-              ),
-            ],
+    return Container(
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: const EdgeInsets.fromLTRB(7, 5, 8, 5),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A0F172A),
+            blurRadius: 28,
+            offset: Offset(0, 8),
           ),
-          child: child,
-        );
-      },
+        ],
+      ),
       child: Row(
         children: [
           IconButton(
             onPressed: null,
             icon: const Icon(Icons.add_rounded),
             color: AppTheme.text,
-            disabledColor: AppTheme.textSubtle,
+            disabledColor: AppTheme.text,
           ),
           Expanded(
             child: TextField(
@@ -753,24 +744,17 @@ class _MemoryComposer extends StatelessWidget {
               onSubmitted: multiline ? null : (_) => onSubmit(),
               decoration: InputDecoration(
                 hintText: hintText,
-                hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xCC94A3B8),
-                ),
                 hoverColor: Colors.transparent,
                 focusColor: Colors.transparent,
                 filled: false,
                 fillColor: Colors.transparent,
-                contentPadding: EdgeInsets.zero,
                 border: InputBorder.none,
                 enabledBorder: InputBorder.none,
                 focusedBorder: InputBorder.none,
                 disabledBorder: InputBorder.none,
                 isDense: true,
               ),
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: const Color(0xFF1E293B),
-                height: 1.5,
-              ),
+              style: Theme.of(context).textTheme.bodyLarge,
             ),
           ),
           IconButton.filled(
@@ -1003,7 +987,7 @@ class _MemoryMessageView extends StatelessWidget {
             if (message.reasoningContent.trim().isNotEmpty) ...[
               _ReasoningBlock(
                 reasoning: message.reasoningContent,
-                collapsed: message.content.trim().isNotEmpty,
+                collapsed: shouldCollapseMemoryReasoning(message),
               ),
               const SizedBox(height: 12),
             ],
