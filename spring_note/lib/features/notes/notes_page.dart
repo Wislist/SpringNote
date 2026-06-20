@@ -519,10 +519,7 @@ class _FimTextEditingController extends TextEditingController {
         TextSpan(text: text.substring(0, offset)),
         TextSpan(
           text: prediction,
-          style: effectiveStyle.copyWith(
-            color: const Color(0xFF8A8A8A),
-            fontStyle: FontStyle.italic,
-          ),
+          style: effectiveStyle.copyWith(color: const Color(0xFF9AA0A6)),
         ),
         TextSpan(text: text.substring(offset)),
       ],
