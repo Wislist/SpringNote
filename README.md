@@ -79,4 +79,4 @@
 > [!TIP]
 > 如果本项目对您的生活 / 工作产生了帮助，或者您关注本项目的未来发展，请给项目 Star，这是我们维护这个开源项目的动力 <3
 
-[![Star History Chart](https://api.star-history.com/chart?repos=Radiant303/SpringNote&type=date&legend=top-left)](https://www.star-history.com/?repos=Radiant303%2FSpringNote&type=date&legend=top-left)
+![Star History](https://api.star-history.com/svg?repos=Radiant303/SpringNote&type=Date)
